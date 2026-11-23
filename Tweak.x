@@ -7,12 +7,12 @@
 
 static CGFloat clockScale = 1.0;
 static CGFloat glassOpacity = 0.8;
-static UIColor *glassColor = nil; // تصحيح الخطأ هنا
+static UIColor *glassColor = nil; 
 
 static void *kPanel = &kPanel;
 static void *kGlass = &kGlass;
+static void *kMask = &kMask;
 
-// تهيئة اللون وقت التشغيل
 %ctor {
     glassColor = [UIColor colorWithWhite:1.0 alpha:0.2];
 }
@@ -82,11 +82,17 @@ static void *kGlass = &kGlass;
 %hook SBFLockScreenDateView
 - (void)layoutSubviews {
     %orig; 
-    UILabel *timeLabel = [self valueForKey:@"_timeLabel"];
+    
+    UILabel *timeLabel = nil;
+    @try {
+        timeLabel = [self valueForKey:@"_timeLabel"];
+    } @catch (NSException *exception) {
+        return; // لو مفيش ليبل، اخرج بأمان
+    }
     if (!timeLabel) return;
 
+    // إخفاء الساعة الأصلية (بدون تغيير حجم الكلاس الأساسي عشان ميهنجش)
     timeLabel.alpha = 0.0; 
-    self.transform = CGAffineTransformMakeScale(clockScale, clockScale);
 
     UIVisualEffectView *glassView = objc_getAssociatedObject(self, &kGlass);
     if (!glassView) {
@@ -99,17 +105,23 @@ static void *kGlass = &kGlass;
         glassView.maskView = maskLabel;
         
         objc_setAssociatedObject(self, &kGlass, glassView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, &kMask, maskLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [self addSubview:glassView];
     }
     
+    // تطبيق التكبير على الزجاج نفسه فقط لتجنب الهنج
+    glassView.transform = CGAffineTransformMakeScale(clockScale, clockScale);
     glassView.frame = timeLabel.frame;
-    UILabel *mask = (UILabel *)glassView.maskView;
+    
+    UILabel *mask = (UILabel *)objc_getAssociatedObject(self, &kMask);
     mask.text = timeLabel.text;
     mask.font = timeLabel.font;
     mask.frame = glassView.bounds;
+    
     glassView.alpha = glassOpacity;
     glassView.contentView.backgroundColor = glassColor;
 
+    // إضافة مستشعر الضغط المطول
     if (![self.gestureRecognizers count]) {
         UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
         [self addGestureRecognizer:longPress];
@@ -120,6 +132,8 @@ static void *kGlass = &kGlass;
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) {
         UIView *window = self.window;
+        if (!window) return;
+        
         if (!objc_getAssociatedObject(self, &kPanel)) {
             GCConfigPanel *panel = [[GCConfigPanel alloc] initWithFrame:CGRectMake(30, window.bounds.size.height / 2 - 150, window.bounds.size.width - 60, 310)];
             [window addSubview:panel];
@@ -129,42 +143,21 @@ static void *kGlass = &kGlass;
 }
 %end
 
-// --- 3. التطور الذاتي ---
+// --- 3. الاستجابة للتحديثات (بدون كراش) ---
 %hook SpringBoard
 - (void)applicationDidFinishLaunching:(id)application {
     %orig;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshClock) name:@"GCUpdateClock" object:nil];
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        NSURL *url = [NSURL URLWithString:@"https://raw.githubusercontent.com/slanttech58-png/GlassClock/main/config.json"];
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        [request setCachePolicy:NSURLRequestReloadIgnoringLocalCacheData];
-        
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-            if (data && !error) {
-                NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-                if (json) {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        if (json[@"scale"]) clockScale = [json[@"scale"] floatValue];
-                        if (json[@"opacity"]) glassOpacity = [json[@"opacity"] floatValue];
-                        if (json[@"color"]) {
-                            NSArray *rgba = json[@"color"];
-                            if (rgba.count == 4) glassColor = [UIColor colorWithRed:[rgba[0] floatValue] green:[rgba[1] floatValue] blue:[rgba[2] floatValue] alpha:[rgba[3] floatValue]];
-                        }
-                        [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil];
-                    });
-                }
-            }
-        }];
-        [task resume];
-    });
 }
-
 %new
 - (void)refreshClock {
-    Class dateViewClass = objc_getClass("SBFLockScreenDateView");
-    if (dateViewClass) { 
-        [[NSClassFromString(@"SBFLockScreenDateView") new] setNeedsLayout]; 
+    // بنبحث عن الساعة في الواجهة الحالية ونطلب منها تتحدث بدون ما نعمل نسخة جديدة
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        for (UIView *view in window.subviews) {
+            if ([view isKindOfClass:NSClassFromString(@"SBFLockScreenDateView")]) {
+                [view setNeedsLayout];
+            }
+        }
     }
 }
 %end
