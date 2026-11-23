@@ -17,7 +17,7 @@ static void *kMask = &kMask;
     glassColor = [UIColor colorWithWhite:1.0 alpha:0.2];
 }
 
-// --- 1. لوحة التحكم ---
+// --- لوحة التحكم ---
 @interface GCConfigPanel : UIView
 @end
 
@@ -78,7 +78,7 @@ static void *kMask = &kMask;
 - (void)closePanel { [UIView animateWithDuration:0.2 animations:^{ self.alpha = 0; } completion:^(BOOL finished) { [self removeFromSuperview]; }]; }
 @end
 
-// --- 2. الهوك الأساسي للساعة ---
+// --- الهوك الأساسي (الآمن) ---
 %hook SBFLockScreenDateView
 - (void)layoutSubviews {
     %orig; 
@@ -87,11 +87,10 @@ static void *kMask = &kMask;
     @try {
         timeLabel = [self valueForKey:@"_timeLabel"];
     } @catch (NSException *exception) {
-        return; // لو مفيش ليبل، اخرج بأمان
+        return; 
     }
     if (!timeLabel) return;
 
-    // إخفاء الساعة الأصلية (بدون تغيير حجم الكلاس الأساسي عشان ميهنجش)
     timeLabel.alpha = 0.0; 
 
     UIVisualEffectView *glassView = objc_getAssociatedObject(self, &kGlass);
@@ -109,7 +108,7 @@ static void *kMask = &kMask;
         [self addSubview:glassView];
     }
     
-    // تطبيق التكبير على الزجاج نفسه فقط لتجنب الهنج
+    // التعديل هنا: بنعمل Transform للزجاج نفسه (مش للساعة)
     glassView.transform = CGAffineTransformMakeScale(clockScale, clockScale);
     glassView.frame = timeLabel.frame;
     
@@ -121,8 +120,14 @@ static void *kMask = &kMask;
     glassView.alpha = glassOpacity;
     glassView.contentView.backgroundColor = glassColor;
 
-    // إضافة مستشعر الضغط المطول
-    if (![self.gestureRecognizers count]) {
+    // إضافة الضغط المطول (بطريقة آمنة)
+    BOOL hasGesture = NO;
+    for (UIGestureRecognizer *g in self.gestureRecognizers) {
+        if ([g isKindOfClass:[UILongPressGestureRecognizer class]]) {
+            hasGesture = YES; break;
+        }
+    }
+    if (!hasGesture) {
         UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
         [self addGestureRecognizer:longPress];
     }
@@ -134,16 +139,17 @@ static void *kMask = &kMask;
         UIView *window = self.window;
         if (!window) return;
         
-        if (!objc_getAssociatedObject(self, &kPanel)) {
-            GCConfigPanel *panel = [[GCConfigPanel alloc] initWithFrame:CGRectMake(30, window.bounds.size.height / 2 - 150, window.bounds.size.width - 60, 310)];
-            [window addSubview:panel];
-            objc_setAssociatedObject(self, &kPanel, panel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
+        GCConfigPanel *existingPanel = objc_getAssociatedObject(self, &kPanel);
+        if (existingPanel && existingPanel.superview) return; // متعملش كراش لو اللوحة مفتوحة
+
+        GCConfigPanel *panel = [[GCConfigPanel alloc] initWithFrame:CGRectMake(30, window.bounds.size.height / 2 - 150, window.bounds.size.width - 60, 310)];
+        [window addSubview:panel];
+        objc_setAssociatedObject(self, &kPanel, panel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
 %end
 
-// --- 3. الاستجابة للتحديثات (بدون كراش) ---
+// --- التحديث الآمن ---
 %hook SpringBoard
 - (void)applicationDidFinishLaunching:(id)application {
     %orig;
@@ -151,10 +157,8 @@ static void *kMask = &kMask;
 }
 %new
 - (void)refreshClock {
-    // إخفاء تحذير آبل عشان الكومبيلر ميزعلش
     #pragma clang diagnostic push
     #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    
     for (UIWindow *window in [UIApplication sharedApplication].windows) {
         for (UIView *view in window.subviews) {
             if ([view isKindOfClass:NSClassFromString(@"SBFLockScreenDateView")]) {
@@ -162,7 +166,6 @@ static void *kMask = &kMask;
             }
         }
     }
-    
     #pragma clang diagnostic pop
 }
 %end
