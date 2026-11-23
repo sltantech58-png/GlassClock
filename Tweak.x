@@ -1,92 +1,131 @@
-// GlassClock - lock screen clock customizer for iOS 14-16
-// NOTE: private class/ivar names can differ per iOS version. Verify with FLEX/Flexing on your device.
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-static NSUserDefaults *D(void){ return NSUserDefaults.standardUserDefaults; }
-static CGFloat GetF(NSString *k, CGFloat def){ id v=[D() objectForKey:[@"gc_" stringByAppendingString:k]]; return v?[v doubleValue]:def; }
-static void SetF(NSString *k, CGFloat v){ [D() setDouble:v forKey:[@"gc_" stringByAppendingString:k]]; }
+static CGFloat clockScale = 1.0;
+static void *kPanel = &kPanel;
+static void *kGlass = &kGlass;
 
-@interface SBFLockScreenDateView : UIView
-- (void)gc_apply;
-- (void)gc_longPress:(UILongPressGestureRecognizer *)g;
+// ---------------------------------------------------------
+// 1. لوحة التخصيص اللي هتظهر لما تدوس مطول على الساعة
+// ---------------------------------------------------------
+@interface GCConfigPanel : UIView
 @end
 
-static char kGlass, kMask, kPanel;
-
-@interface GCPanel : UIView
-@property (nonatomic, weak) UIView *target;
-@end
-@implementation GCPanel
-- (instancetype)initWithFrame:(CGRect)f {
-  if ((self=[super initWithFrame:f])) {
-    UIVisualEffectView *bg=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark]];
-    bg.frame=self.bounds; bg.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-    bg.layer.cornerRadius=22; bg.clipsToBounds=YES; [self addSubview:bg];
-    NSArray *rows=@[@[@"size",@"Size",@0.5,@1.8,@1.0],@[@"hue",@"Color",@0,@1,@0.0],@[@"glass",@"Glass",@0,@1,@0.8],@[@"blur",@"Blur",@0,@1,@0.5]];
-    CGFloat y=14;
-    for (NSArray *r in rows) {
-      UILabel *l=[[UILabel alloc] initWithFrame:CGRectMake(16,y,70,30)]; l.text=r[1]; l.textColor=UIColor.whiteColor; l.font=[UIFont systemFontOfSize:14]; [self addSubview:l];
-      UISlider *s=[[UISlider alloc] initWithFrame:CGRectMake(90,y,f.size.width-106,30)];
-      s.minimumValue=[r[2] floatValue]; s.maximumValue=[r[3] floatValue]; s.value=GetF(r[0],[r[4] doubleValue]);
-      s.accessibilityIdentifier=r[0]; [s addTarget:self action:@selector(changed:) forControlEvents:UIControlEventValueChanged];
-      [self addSubview:s]; y+=40;
+@implementation GCConfigPanel
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.85];
+        self.layer.cornerRadius = 20;
+        self.layer.masksToBounds = YES;
+        
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, frame.size.width, 30)];
+        title.text = @"GlassClock Settings (iOS 15)";
+        title.textColor = [UIColor whiteColor];
+        title.textAlignment = NSTextAlignmentCenter;
+        title.font = [UIFont boldSystemFontOfSize:16];
+        [self addSubview:title];
+        
+        // زر التكبير
+        UIButton *sizeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        sizeBtn.frame = CGRectMake(20, 60, frame.size.width - 40, 40);
+        [sizeBtn setTitle:@"تكبير / تصغير الساعة" forState:UIControlStateNormal];
+        [sizeBtn addTarget:self action:@selector(toggleSize) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:sizeBtn];
+        
+        // زر إغلاق
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.frame = CGRectMake(20, 150, frame.size.width - 40, 40);
+        [closeBtn setTitle:@"إغلاق وحفظ" forState:UIControlStateNormal];
+        [closeBtn setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
+        [closeBtn addTarget:self action:@selector(closePanel) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:closeBtn];
     }
-    UIButton *done=[UIButton buttonWithType:UIButtonTypeSystem]; done.frame=CGRectMake(f.size.width/2-40,y,80,30);
-    [done setTitle:@"Done" forState:UIControlStateNormal]; [done addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self addSubview:done];
-  } return self;
+    return self;
 }
-- (void)changed:(UISlider *)s { SetF(s.accessibilityIdentifier, s.value); [D() synchronize]; [(id)self.target gc_apply]; }
-- (void)close { [UIView animateWithDuration:.2 animations:^{ self.alpha=0; } completion:^(BOOL f){ [self removeFromSuperview]; }]; }
+- (void)toggleSize {
+    clockScale = (clockScale > 1.0) ? 1.0 : 1.4;
+    // إرسال إشعار للساعة عشان تتحدث فوراً
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil];
+}
+- (void)closePanel {
+    [UIView animateWithDuration:0.2 animations:^{ self.alpha = 0; } completion:^(BOOL finished) { [self removeFromSuperview]; }];
+}
 @end
 
+// ---------------------------------------------------------
+// 2. الهوك الأساسي على شاشة القفل (iOS 15)
+// ---------------------------------------------------------
 %hook SBFLockScreenDateView
-- (void)didMoveToWindow {
-  %orig;
-  if (self.window && !objc_getAssociatedObject(self,&kGlass)) {
-    UILongPressGestureRecognizer *lp=[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(gc_longPress:)];
-    lp.minimumPressDuration=0.6; [self addGestureRecognizer:lp];
-  }
+
+- (void)layoutSubviews {
+    %orig; // تنفيذ كود آبل الأساسي
+    
+    // إيجاد الليبل بتاع الوقت
+    UILabel *timeLabel = [self valueForKey:@"_timeLabel"];
+    if (!timeLabel) return;
+
+    // تطبيق التكبير
+    self.transform = CGAffineTransformMakeScale(clockScale, clockScale);
+
+    // بناء تأثير الزجاج
+    UIVisualEffectView *glassView = objc_getAssociatedObject(self, &kGlass);
+    if (!glassView) {
+        glassView = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialLight]];
+        glassView.userInteractionEnabled = NO;
+        
+        // عمل قناع (Mask) بشكل النص
+        UILabel *maskLabel = [[UILabel alloc] initWithFrame:timeLabel.bounds];
+        maskLabel.textAlignment = NSTextAlignmentCenter;
+        maskLabel.textColor = [UIColor whiteColor];
+        glassView.maskView = maskLabel;
+        
+        objc_setAssociatedObject(self, &kGlass, glassView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [self addSubview:glassView];
+        [self bringSubviewToFront:glassView];
+    }
+    
+    // تحديث إعدادات الزجاج
+    glassView.frame = timeLabel.frame;
+    UILabel *mask = (UILabel *)glassView.maskView;
+    mask.text = timeLabel.text;
+    mask.font = timeLabel.font;
+    mask.frame = glassView.bounds;
+    
+    // إخفاء الساعة الأصلية عشان الزجاج يبان
+    timeLabel.alpha = 0.2; 
+
+    // إضافة خاصية الضغط المطول (لو مش مضافة)
+    if (![self.gestureRecognizers count]) {
+        UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
+        [self addGestureRecognizer:longPress];
+    }
 }
-- (void)layoutSubviews { %orig; [self gc_apply]; }
 
 %new
-- (void)gc_apply {
-  UIView *time=nil; @try { time=[self valueForKey:@"_timeLabel"]; } @catch(...) {}
-  if (!time) return;
-  CGFloat size=GetF(@"size",1.0), hue=GetF(@"hue",0.0), glass=GetF(@"glass",0.8), blur=GetF(@"blur",0.5);
-  time.transform=CGAffineTransformMakeScale(size,size);
-
-  UIVisualEffectView *gv=objc_getAssociatedObject(self,&kGlass);
-  UILabel *mask=objc_getAssociatedObject(self,&kMask);
-  if (glass<=0.01) { gv.hidden=YES; time.alpha=1; return; }
-  if (!gv) {
-    gv=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialLight]];
-    mask=[UILabel new]; mask.textAlignment=NSTextAlignmentCenter; mask.textColor=UIColor.whiteColor;
-    gv.maskView=mask; gv.userInteractionEnabled=NO;
-    objc_setAssociatedObject(self,&kGlass,gv,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(self,&kMask,mask,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [self addSubview:gv];
-  }
-  gv.hidden=NO;
-  NSString *txt=nil; UIFont *font=nil;
-  @try { txt=[(id)time valueForKey:@"string"]; font=[(id)time valueForKey:@"font"]; } @catch(...) {}
-  if (!txt) return;
-  gv.frame=time.frame; gv.transform=time.transform;
-  mask.frame=gv.bounds; mask.text=txt; mask.font=font?:[UIFont systemFontOfSize:80 weight:UIFontWeightBold];
-  gv.alpha=glass;
-  gv.backgroundColor=[UIColor colorWithHue:hue saturation:(hue>0.01?0.6:0) brightness:1 alpha:0.35*blur+0.1];
-  time.alpha=0.0; // hide original; glass copy replaces it
+- (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        UIView *window = self.window;
+        if (!objc_getAssociatedObject(self, &kPanel)) {
+            GCConfigPanel *panel = [[GCConfigPanel alloc] initWithFrame:CGRectMake(40, window.bounds.size.height / 2 - 100, window.bounds.size.width - 80, 210)];
+            [window addSubview:panel];
+            objc_setAssociatedObject(self, &kPanel, panel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
 }
+%end
 
+// ---------------------------------------------------------
+// 3. التحديث الفوري عند التغيير
+// ---------------------------------------------------------
+%hook SpringBoard
+- (void)applicationDidFinishLaunching:(id)application {
+    %orig;
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshClock) name:@"GCUpdateClock" object:nil];
+}
 %new
-- (void)gc_longPress:(UILongPressGestureRecognizer *)g {
-  if (g.state!=UIGestureRecognizerStateBegan) return;
-  GCPanel *old=objc_getAssociatedObject(self,&kPanel); if (old.superview) return;
-  UIView *host=self.window; CGFloat w=MIN(host.bounds.size.width-40,340);
-  GCPanel *p=[[GCPanel alloc] initWithFrame:CGRectMake((host.bounds.size.width-w)/2,host.bounds.size.height*0.5,w,225)];
-  p.target=self; p.alpha=0; [host addSubview:p];
-  objc_setAssociatedObject(self,&kPanel,p,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-  [UIView animateWithDuration:.2 animations:^{ p.alpha=1; }];
+- (void)refreshClock {
+    // إجبار شاشة القفل على إعادة التخطيط
+    [[objc_getClass("SBFLockScreenDateView") new] setNeedsLayout];
 }
 %end
