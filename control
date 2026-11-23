@@ -1,0 +1,9 @@
+Package: com.example.glassclock
+Name: GlassClock
+Version: 0.1.0
+Architecture: iphoneos-arm
+Description: Lock screen clock with glass style, size and color customization (long-press the clock)
+Maintainer: you
+Author: you
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 14.0)
