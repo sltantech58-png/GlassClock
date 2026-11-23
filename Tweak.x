@@ -1,13 +1,48 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+// تعريف الكلاس عشان الكومبيلر ميزعلش
+@interface SBFLockScreenDateView : UIView
+@end
+
 static CGFloat clockScale = 1.0;
+static CGFloat glassOpacity = 0.8;
+static UIColor *glassColor = [UIColor colorWithWhite:1.0 alpha:0.2]; 
+static BOOL isOnlineUpdateLoaded = NO;
+
 static void *kPanel = &kPanel;
 static void *kGlass = &kGlass;
 
-// ---------------------------------------------------------
-// 1. لوحة التخصيص اللي هتظهر لما تدوس مطول على الساعة
-// ---------------------------------------------------------
+// --- دالة التطور الذاتي ---
+void FetchRemoteConfig() {
+    if (isOnlineUpdateLoaded) return; 
+    NSURL *url = [NSURL URLWithString:@"https://raw.githubusercontent.com/slanttech58-png/GlassClock/main/config.json"];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    [request setCachePolicy:NSURLRequestReloadIgnoringLocalCacheData]; 
+    
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (data && !error) {
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if (json) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (json[@"scale"]) clockScale = [json[@"scale"] floatValue];
+                    if (json[@"opacity"]) glassOpacity = [json[@"opacity"] floatValue];
+                    if (json[@"color"]) {
+                        NSArray *rgba = json[@"color"];
+                        if (rgba.count == 4) {
+                            glassColor = [UIColor colorWithRed:[rgba[0] floatValue] green:[rgba[1] floatValue] blue:[rgba[2] floatValue] alpha:[rgba[3] floatValue]];
+                        }
+                    }
+                    isOnlineUpdateLoaded = YES;
+                    [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil];
+                });
+            }
+        }
+    }];
+    [task resume];
+}
+
+// --- لوحة التحكم (كاملة) ---
 @interface GCConfigPanel : UIView
 @end
 
@@ -20,61 +55,73 @@ static void *kGlass = &kGlass;
         self.layer.masksToBounds = YES;
         
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, frame.size.width, 30)];
-        title.text = @"GlassClock Settings (iOS 15)";
+        title.text = @"GlassClock Control";
         title.textColor = [UIColor whiteColor];
         title.textAlignment = NSTextAlignmentCenter;
         title.font = [UIFont boldSystemFontOfSize:16];
         [self addSubview:title];
         
-        // زر التكبير
-        UIButton *sizeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        sizeBtn.frame = CGRectMake(20, 60, frame.size.width - 40, 40);
-        [sizeBtn setTitle:@"تكبير / تصغير الساعة" forState:UIControlStateNormal];
-        [sizeBtn addTarget:self action:@selector(toggleSize) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:sizeBtn];
+        // Size Slider
+        UISlider *sizeSlider = [[UISlider alloc] initWithFrame:CGRectMake(20, 60, frame.size.width - 40, 30)];
+        sizeSlider.minimumValue = 0.8; sizeSlider.maximumValue = 1.5; sizeSlider.value = clockScale;
+        [sizeSlider addTarget:self action:@selector(sizeChanged:) forControlEvents:UIControlEventValueChanged];
+        [self addSubview:sizeSlider];
         
-        // زر إغلاق
+        // Opacity Slider
+        UISlider *opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(20, 120, frame.size.width - 40, 30)];
+        opacitySlider.minimumValue = 0.1; opacitySlider.maximumValue = 1.0; opacitySlider.value = glassOpacity;
+        [opacitySlider addTarget:self action:@selector(opacityChanged:) forControlEvents:UIControlEventValueChanged];
+        [self addSubview:opacitySlider];
+        
+        // Colors
+        NSArray *colors = @[[UIColor whiteColor], [UIColor cyanColor], [UIColor systemPinkColor], [UIColor systemYellowColor]];
+        for (int i = 0; i < colors.count; i++) {
+            UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+            btn.frame = CGRectMake(20 + (i * 45), 180, 35, 35);
+            btn.backgroundColor = colors[i];
+            btn.layer.cornerRadius = 17.5;
+            btn.tag = i;
+            [btn addTarget:self action:@selector(colorChanged:) forControlEvents:UIControlEventTouchUpInside];
+            [self addSubview:btn];
+        }
+        
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(20, 150, frame.size.width - 40, 40);
-        [closeBtn setTitle:@"إغلاق وحفظ" forState:UIControlStateNormal];
+        closeBtn.frame = CGRectMake(20, 240, frame.size.width - 40, 40);
+        [closeBtn setTitle:@"إغلاق" forState:UIControlStateNormal];
         [closeBtn setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
         [closeBtn addTarget:self action:@selector(closePanel) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:closeBtn];
     }
     return self;
 }
-- (void)toggleSize {
-    clockScale = (clockScale > 1.0) ? 1.0 : 1.4;
-    // إرسال إشعار للساعة عشان تتحدث فوراً
+- (void)sizeChanged:(UISlider *)s { clockScale = s.value; [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil]; }
+- (void)opacityChanged:(UISlider *)s { glassOpacity = s.value; [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil]; }
+- (void)colorChanged:(UIButton *)b {
+    if(b.tag==0) glassColor=[UIColor colorWithWhite:1.0 alpha:0.5];
+    if(b.tag==1) glassColor=[UIColor colorWithRed:0 green:1 blue:1 alpha:0.5];
+    if(b.tag==2) glassColor=[UIColor colorWithRed:1 green:0.4 blue:0.6 alpha:0.5];
+    if(b.tag==3) glassColor=[UIColor colorWithRed:1 green:1 blue:0 alpha:0.5];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil];
 }
-- (void)closePanel {
-    [UIView animateWithDuration:0.2 animations:^{ self.alpha = 0; } completion:^(BOOL finished) { [self removeFromSuperview]; }];
-}
+- (void)closePanel { [UIView animateWithDuration:0.2 animations:^{ self.alpha = 0; } completion:^(BOOL finished) { [self removeFromSuperview]; }]; }
 @end
 
-// ---------------------------------------------------------
-// 2. الهوك الأساسي على شاشة القفل (iOS 15)
-// ---------------------------------------------------------
+// --- الهوك الأساسي ---
 %hook SBFLockScreenDateView
 
 - (void)layoutSubviews {
-    %orig; // تنفيذ كود آبل الأساسي
-    
-    // إيجاد الليبل بتاع الوقت
+    %orig; 
     UILabel *timeLabel = [self valueForKey:@"_timeLabel"];
     if (!timeLabel) return;
 
-    // تطبيق التكبير
+    timeLabel.alpha = 0.0; // إخفاء ساعة النظام
     self.transform = CGAffineTransformMakeScale(clockScale, clockScale);
 
-    // بناء تأثير الزجاج
     UIVisualEffectView *glassView = objc_getAssociatedObject(self, &kGlass);
     if (!glassView) {
-        glassView = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialLight]];
+        glassView = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
         glassView.userInteractionEnabled = NO;
         
-        // عمل قناع (Mask) بشكل النص
         UILabel *maskLabel = [[UILabel alloc] initWithFrame:timeLabel.bounds];
         maskLabel.textAlignment = NSTextAlignmentCenter;
         maskLabel.textColor = [UIColor whiteColor];
@@ -82,20 +129,16 @@ static void *kGlass = &kGlass;
         
         objc_setAssociatedObject(self, &kGlass, glassView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [self addSubview:glassView];
-        [self bringSubviewToFront:glassView];
     }
     
-    // تحديث إعدادات الزجاج
     glassView.frame = timeLabel.frame;
     UILabel *mask = (UILabel *)glassView.maskView;
     mask.text = timeLabel.text;
     mask.font = timeLabel.font;
     mask.frame = glassView.bounds;
-    
-    // إخفاء الساعة الأصلية عشان الزجاج يبان
-    timeLabel.alpha = 0.2; 
+    glassView.alpha = glassOpacity;
+    glassView.contentView.backgroundColor = glassColor;
 
-    // إضافة خاصية الضغط المطول (لو مش مضافة)
     if (![self.gestureRecognizers count]) {
         UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
         [self addGestureRecognizer:longPress];
@@ -107,7 +150,7 @@ static void *kGlass = &kGlass;
     if (gesture.state == UIGestureRecognizerStateBegan) {
         UIView *window = self.window;
         if (!objc_getAssociatedObject(self, &kPanel)) {
-            GCConfigPanel *panel = [[GCConfigPanel alloc] initWithFrame:CGRectMake(40, window.bounds.size.height / 2 - 100, window.bounds.size.width - 80, 210)];
+            GCConfigPanel *panel = [[GCConfigPanel alloc] initWithFrame:CGRectMake(30, window.bounds.size.height / 2 - 150, window.bounds.size.width - 60, 310)];
             [window addSubview:panel];
             objc_setAssociatedObject(self, &kPanel, panel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
@@ -115,17 +158,15 @@ static void *kGlass = &kGlass;
 }
 %end
 
-// ---------------------------------------------------------
-// 3. التحديث الفوري عند التغيير
-// ---------------------------------------------------------
 %hook SpringBoard
 - (void)applicationDidFinishLaunching:(id)application {
     %orig;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshClock) name:@"GCUpdateClock" object:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ FetchRemoteConfig(); });
 }
 %new
 - (void)refreshClock {
-    // إجبار شاشة القفل على إعادة التخطيط
-    [[objc_getClass("SBFLockScreenDateView") new] setNeedsLayout];
+    Class dateViewClass = objc_getClass("SBFLockScreenDateView");
+    if (dateViewClass) { [[dateViewClass new] setNeedsLayout]; }
 }
 %end
