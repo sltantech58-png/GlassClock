@@ -1,48 +1,24 @@
 #import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 
-// تعريف الكلاس عشان الكومبيلر ميزعلش
 @interface SBFLockScreenDateView : UIView
 @end
 
 static CGFloat clockScale = 1.0;
 static CGFloat glassOpacity = 0.8;
-static UIColor *glassColor = [UIColor colorWithWhite:1.0 alpha:0.2]; 
+static UIColor *glassColor = nil; // تصحيح الخطأ هنا
 static BOOL isOnlineUpdateLoaded = NO;
 
 static void *kPanel = &kPanel;
 static void *kGlass = &kGlass;
 
-// --- دالة التطور الذاتي ---
-void FetchRemoteConfig() {
-    if (isOnlineUpdateLoaded) return; 
-    NSURL *url = [NSURL URLWithString:@"https://raw.githubusercontent.com/slanttech58-png/GlassClock/main/config.json"];
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    [request setCachePolicy:NSURLRequestReloadIgnoringLocalCacheData]; 
-    
-    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        if (data && !error) {
-            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-            if (json) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (json[@"scale"]) clockScale = [json[@"scale"] floatValue];
-                    if (json[@"opacity"]) glassOpacity = [json[@"opacity"] floatValue];
-                    if (json[@"color"]) {
-                        NSArray *rgba = json[@"color"];
-                        if (rgba.count == 4) {
-                            glassColor = [UIColor colorWithRed:[rgba[0] floatValue] green:[rgba[1] floatValue] blue:[rgba[2] floatValue] alpha:[rgba[3] floatValue]];
-                        }
-                    }
-                    isOnlineUpdateLoaded = YES;
-                    [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil];
-                });
-            }
-        }
-    }];
-    [task resume];
+// تهيئة اللون وقت التشغيل
+%ctor {
+    glassColor = [UIColor colorWithWhite:1.0 alpha:0.2];
 }
 
-// --- لوحة التحكم (كاملة) ---
+// --- 1. لوحة التحكم ---
 @interface GCConfigPanel : UIView
 @end
 
@@ -61,19 +37,16 @@ void FetchRemoteConfig() {
         title.font = [UIFont boldSystemFontOfSize:16];
         [self addSubview:title];
         
-        // Size Slider
         UISlider *sizeSlider = [[UISlider alloc] initWithFrame:CGRectMake(20, 60, frame.size.width - 40, 30)];
         sizeSlider.minimumValue = 0.8; sizeSlider.maximumValue = 1.5; sizeSlider.value = clockScale;
         [sizeSlider addTarget:self action:@selector(sizeChanged:) forControlEvents:UIControlEventValueChanged];
         [self addSubview:sizeSlider];
         
-        // Opacity Slider
         UISlider *opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(20, 120, frame.size.width - 40, 30)];
         opacitySlider.minimumValue = 0.1; opacitySlider.maximumValue = 1.0; opacitySlider.value = glassOpacity;
         [opacitySlider addTarget:self action:@selector(opacityChanged:) forControlEvents:UIControlEventValueChanged];
         [self addSubview:opacitySlider];
         
-        // Colors
         NSArray *colors = @[[UIColor whiteColor], [UIColor cyanColor], [UIColor systemPinkColor], [UIColor systemYellowColor]];
         for (int i = 0; i < colors.count; i++) {
             UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -106,15 +79,14 @@ void FetchRemoteConfig() {
 - (void)closePanel { [UIView animateWithDuration:0.2 animations:^{ self.alpha = 0; } completion:^(BOOL finished) { [self removeFromSuperview]; }]; }
 @end
 
-// --- الهوك الأساسي ---
+// --- 2. الهوك الأساسي للساعة ---
 %hook SBFLockScreenDateView
-
 - (void)layoutSubviews {
     %orig; 
     UILabel *timeLabel = [self valueForKey:@"_timeLabel"];
     if (!timeLabel) return;
 
-    timeLabel.alpha = 0.0; // إخفاء ساعة النظام
+    timeLabel.alpha = 0.0; 
     self.transform = CGAffineTransformMakeScale(clockScale, clockScale);
 
     UIVisualEffectView *glassView = objc_getAssociatedObject(self, &kGlass);
@@ -158,15 +130,42 @@ void FetchRemoteConfig() {
 }
 %end
 
+// --- 3. التطور الذاتي ---
 %hook SpringBoard
 - (void)applicationDidFinishLaunching:(id)application {
     %orig;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshClock) name:@"GCUpdateClock" object:nil];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ FetchRemoteConfig(); });
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSURL *url = [NSURL URLWithString:@"https://raw.githubusercontent.com/slanttech58-png/GlassClock/main/config.json"];
+        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+        [request setCachePolicy:NSURLRequestReloadIgnoringLocalCacheData];
+        
+        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            if (data && !error) {
+                NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                if (json) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (json[@"scale"]) clockScale = [json[@"scale"] floatValue];
+                        if (json[@"opacity"]) glassOpacity = [json[@"opacity"] floatValue];
+                        if (json[@"color"]) {
+                            NSArray *rgba = json[@"color"];
+                            if (rgba.count == 4) glassColor = [UIColor colorWithRed:[rgba[0] floatValue] green:[rgba[1] floatValue] blue:[rgba[2] floatValue] alpha:[rgba[3] floatValue]];
+                        }
+                        [[NSNotificationCenter defaultCenter] postNotificationName:@"GCUpdateClock" object:nil];
+                    });
+                }
+            }
+        }];
+        [task resume];
+    });
 }
+
 %new
 - (void)refreshClock {
     Class dateViewClass = objc_getClass("SBFLockScreenDateView");
-    if (dateViewClass) { [[dateViewClass new] setNeedsLayout]; }
+    if (dateViewClass) { 
+        [[NSClassFromString(@"SBFLockScreenDateView") new] setNeedsLayout]; 
+    }
 }
 %end
