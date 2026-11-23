@@ -1,0 +1,23 @@
+name: Build GlassClock Deb
+on:
+push:
+branches: [ main, master ]
+workflow_dispatch:
+jobs:
+build:
+runs-on: ubuntu-latest
+steps:
+  - name: Checkout Code
+    uses: actions/checkout@v4
+
+  - name: Install Theos
+    uses: Randomblock1/theos-action@v1
+
+  - name: Build Package
+    run: make package FINALPACKAGE=1
+
+  - name: Upload Deb Artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: GlassClock-Deb
+      path: packages/*.deb
