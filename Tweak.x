@@ -8,7 +8,6 @@
 static CGFloat clockScale = 1.0;
 static CGFloat glassOpacity = 0.8;
 static UIColor *glassColor = nil; // تصحيح الخطأ هنا
-static BOOL isOnlineUpdateLoaded = NO;
 
 static void *kPanel = &kPanel;
 static void *kGlass = &kGlass;
