@@ -1,7 +1,7 @@
 Package: com.slanttech58.glassclock
 Name: GlassClock
 Version: 1.0.0
-Architecture: iphoneos-arm
+Architecture: iphoneos-arm64
 Description: A Glass Clock tweak
 Maintainer: slanttech58-png
 Author: slanttech58-png
