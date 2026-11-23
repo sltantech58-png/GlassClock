@@ -151,7 +151,10 @@ static void *kMask = &kMask;
 }
 %new
 - (void)refreshClock {
-    // بنبحث عن الساعة في الواجهة الحالية ونطلب منها تتحدث بدون ما نعمل نسخة جديدة
+    // إخفاء تحذير آبل عشان الكومبيلر ميزعلش
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    
     for (UIWindow *window in [UIApplication sharedApplication].windows) {
         for (UIView *view in window.subviews) {
             if ([view isKindOfClass:NSClassFromString(@"SBFLockScreenDateView")]) {
@@ -159,5 +162,7 @@ static void *kMask = &kMask;
             }
         }
     }
+    
+    #pragma clang diagnostic pop
 }
 %end
