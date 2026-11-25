@@ -1,0 +1,30 @@
+name: Build Tweak
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Theos
+      run: |
+        export THEOS=$HOME/theos
+        git clone --recursive https://github.com/theos/theos.git $THEOS
+        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+    - name: Build Package
+      run: |
+        make package FINALPACKAGE=1
+
+    - name: Upload Deb File
+      uses: actions/upload-artifact@v4
+      with:
+        name: GlassClock-Deb
+        path: packages/*.deb
